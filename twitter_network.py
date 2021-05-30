@@ -11,22 +11,23 @@ import queue
 
 import logging
 
-logger = logging.getLogger(__name__)
 
 def parse_arguments():
   parser = argparse.ArgumentParser()
   parser.add_argument('user')
-  parser.add_argument('--nodes',help="Filename for nodes file")
-  parser.add_argument('--edges', help="Filename for edges file")
-  parser.add_argument('--case', help="Filename for cache file")
+  parser.add_argument('--nodes', default="nodes.csv",help="Filename for nodes file")
+  parser.add_argument('--edges', default="edges.csv",help="Filename for edges file")
+  parser.add_argument('--user-cache',default="user_cache.txt", help="Filename for user cache file")
+  parser.add_argument('--follows-cache',default="follow_cache.txt", help="Filename for follows cache file")
   return parser.parse_args()
 
 class twitter_graph():  
 
-  def __init__(self,auto_sleep=False
-               ,nodes_filename = "nodes.csv"
-               ,edges_filename="edges.csv" 
-               ,cache_filename="cache.txt"):
+  def __init__(self,auto_sleep=False,
+               nodes_filename = "nodes.csv",
+               edges_filename="edges.csv",
+               user_cache_name="user_cache.txt",
+               follow_cache_name="follow_cache.txt"):
     # Getting credentials
     apk,aps,at,atk=self._get_credentials()
     # Initializing api 
@@ -44,7 +45,8 @@ class twitter_graph():
     self.queue = queue.Queue(50) 
     self.stop = threading.Event()
     
-    self.cache_filename = cache_filename
+    self.user_cache_name = user_cache_name
+    self.follow_cache_name = follow_cache_name
     self._make_nodes_headers()
     return
 
@@ -66,25 +68,35 @@ class twitter_graph():
     return api_key,api_secret,access_token,access_secret
 
 
-  def save_cache(self,ids):
-    with open(self.cache_filename, 'w') as cache:
-      for i in ids:
-        cache.write(i+'\n')
+  def save_cache(self,fname,ids):
+    """ Save to cache files """
+    fmt = "{}\n"
+    with open(fname, 'a') as cache:
+      if isinstance(ids,list):
+        logger.debug("Saving %s ids to %s",len(ids),fname)
+        for i in ids:
+          cache.write(fmt.format(i))
+      else:   
+        logger.debug("Saving %s id to %s",ids,fname)
+        cache.write(fmt.format(ids))
   
     return
 
-  def load_cache(self):
-    self.cache=""
-    if not os.path.isfile(self.cache_filename):
-      return
+  def load_cache(self,fname):
+    if not os.path.isfile(fname):
+      return []
 
-    with open(self.cache_filename, 'r') as cache:
-        self.cache = cache.read()
-    
-    return
+    with open(fname, 'r') as cache:
+        cache = cache.read()
+        cache = cache.split() 
+    return cache
 
   def _make_nodes_headers(self):
     """Start users file for this run """
+    if os.path.isfile(self._nodes_filename):
+      logger.info("Nodes files already exists won't overwrite")
+      return
+
     with open(self._nodes_filename, 'w') as nodes_file:
       writer = csv.DictWriter(nodes_file, fieldnames=self.attr_lst)
       writer.writeheader()
@@ -108,25 +120,24 @@ class twitter_graph():
       followers = self.api.GetFollowerIDs(user.id,total_count=5000)
       logger.info("Found {} followers from {}".format(len(followers),user.screen_name)) 
     except twitter.error.TwitterError as e: 
+      logger.error("When getting followers for id {}".format(username))
       logger.error("Failed. Error: {}".format(e))
    
-    self.persist_followers(user,followers)
-
     return followers
 
-  def get_followers_id(self,id):
+  def get_followers_id(self,user_id):
     followers_ids = []
     try:
-      followers_ids = self.api.GetFollowerIDs(id)
-      logger.info("Found {} followers from {}".format(len(followers_ids),id))
-      self.save_cache(id)
+      followers_ids = self.api.GetFollowerIDs(user_id)
+      logger.info("Found {} followers from {}".format(len(followers_ids),user_id))
     except twitter.error.TwitterError as e: 
+      logger.error("When getting followers for id {}".format(user_id))
       logger.error("Failed. Error: {}".format(e))
 
     return followers_ids
 
   def persist_followers(self,usr,followers):
-    adj_lst = [usr.id] + followers
+    adj_lst = [usr] + followers
     with open(self._edges_filename, 'a') as edges_file:
       writer = csv.writer(edges_file)
       writer.writerow(adj_lst)
@@ -169,8 +180,8 @@ class twitter_graph():
 
   def get_friends_id(self,id):
     try:
-      friends_ids = self.api.GetFriendIDs(id)
-      print("Found {} friends from {}".format(len(friends_ids),id))
+      friends_ids = self.api.GetFriendIDs(user_id)
+      print("Found {} friends from {}".format(len(friends_ids),user_id))
     except twitter.error.TwitterError as e: 
       print("Failed. Error: {}".format(e))
       friends_ids = []
@@ -183,51 +194,93 @@ class twitter_graph():
 
   def make_network(self,root):
     """root is username to pivot"""
+    # Can't add pivot/root to cache else won't start on secon runs
     edges=self.get_followers(root)
-
-    # Instances 2 thread, one consults followers other hydrate users
-    followers_th = threading.Thread(target=get_network, args=(edges,),daemon=True)
-    users_th = threading.Thread(target=hydrate_ids, daemon=True)
+    logger.info("Loading caches")
+    self.user_cache = self.load_cache(self.user_cache_name)
+    self.follow_cache = self.load_cache(self.follow_cache_name)
     
+    # Instances 2 thread, one consults followers other hydrate users
+    followers_th = threading.Thread(target=self.get_network, args=(edges,),daemon=False)
+    users_th = threading.Thread(target=self.hydrate_ids, daemon=False)
+    
+    logger.info("Starting thread")
     followers_th.start()
     users_th.start()
+    
+    followers_th.join()
+    users_th.join()
 
     return
     
-  def get_network(self,ids):
+  def get_network(self,edges):
     """ From pivots follows ids get all ids"""
-    edges = ids 
     for e in edges:
-      followers_list=self.get_followers_id(e.id)
+      if str(e) in self.follow_cache:
+        logger.info("ID %s already on followers cache",e)
+        continue
+      # Get followers from each edge
+      followers_list=self.get_followers_id(e)
+      # Add to hydration queue 
       self.queue.put(followers_list)
-      
+      # Save to cache and persists
+      self.save_cache(self.follow_cache_name,e) 
+      self.persist_followers(e,followers_list)
+
+    # Stop when everythin is done
+    logger.info("All finished stop threads")
     self.stop.set()
     
   def hydrate_ids(self):
     """Hydrate ids in parallel"""
-    while self.stop.is_set() and not self.queue.empty():
-      ids = self.queue.get()
-      self.get_users_from_ids(ids)
-    
+    logger.info("Starting user scraping")
+    while not self.stop.is_set() or not self.queue.empty():
+      # Queue stores list of ids not individual ids
+      try:
+        ids = self.queue.get(timeout=10)
+      except queue.Empty as e:
+        # In case queue is empty before stop is set
+        logger.debug("Queue is empty for more than 10 secs")
+        continue
+      new_ids = set(ids) - set(self.user_cache)
+      new_ids_lst = list(new_ids)
+      logger.info("Found %s ids not in cache",len(new_ids))
+      users = self.get_users_from_ids(new_ids_lst)
+      # Persist users and cache 
+      self.save_cache(self.user_cache_name,new_ids_lst)
+      self.persist_users(users)
+
+    logger.info("User scraping finished") 
     return     
 
 
 if __name__ == "__main__":
   # Set up logging
-  logger.setLevel(logging.INFO)
-  ch = logging.StreamHandler()
-  ch.setLevel(logging.DEBUG)
+  logger = logging.getLogger("Networks")
+  logger.setLevel(logging.DEBUG)
+
   fmt = logging.Formatter("%(asctime)s: %(message)s")
-  ch.setFormatter = fmt
+
+  ch = logging.StreamHandler()
+  ch.setLevel(logging.INFO)
+  ch.setFormatter(fmt)
   logger.addHandler(ch)
 
+  fh = logging.FileHandler("twitter_net.log")
+  fh.setLevel(logging.DEBUG)
+  fh.setFormatter(fmt)
+  logger.addHandler(fh)
+
   args = parse_arguments()
-  grph = twitter_graph()
+  grph = twitter_graph(nodes_filename=args.nodes,
+          edges_filename=args.edges,
+          user_cache_name=args.user_cache,
+          follow_cache_name=args.follows_cache)
   #grph.get_friends(args.user)
   
   logger.info("Scraping network, pivot from %s",args.user)
-  f = grph.get_followers(args.user)
+  #f = grph.get_followers(args.user)
   #u = grph.get_users_from_ids(f)
   
-  #grph.make_network(args.user)
+  grph.make_network(args.user)
   
