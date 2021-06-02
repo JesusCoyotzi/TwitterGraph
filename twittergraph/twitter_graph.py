@@ -11,19 +11,16 @@ import queue
 
 import logging
 
+import time
 
-def parse_arguments():
-  parser = argparse.ArgumentParser()
-  parser.add_argument('user')
-  parser.add_argument('--nodes', default="nodes.csv",help="Filename for nodes file")
-  parser.add_argument('--edges', default="edges.csv",help="Filename for edges file")
-  parser.add_argument('--user-cache',default="user_cache.txt", help="Filename for user cache file")
-  parser.add_argument('--follows-cache',default="follow_cache.txt", help="Filename for follows cache file")
-  return parser.parse_args()
+logger = logging.getLogger("TwitterGraph")
 
-class twitter_graph():  
+class TwitterGraph():  
+  """ This class scrapes,stores and persist a twitter graph
+  or network it is meant for data ingestion and not for 
+  operating directly on the graph """
 
-  def __init__(self,auto_sleep=False,
+  def __init__(self,auto_sleep=True,
                nodes_filename = "nodes.csv",
                edges_filename="edges.csv",
                user_cache_name="user_cache.txt",
@@ -49,6 +46,7 @@ class twitter_graph():
     self.follow_cache_name = follow_cache_name
     self._make_nodes_headers()
     return
+  
 
   def _get_credentials(self):
     api_key=os.environ.get("API_KEY",None)
@@ -70,15 +68,14 @@ class twitter_graph():
 
   def save_cache(self,fname,ids):
     """ Save to cache files """
+    if not ids:
+      logger.debug("Nothing to add to cache")
+
     fmt = "{}\n"
     with open(fname, 'a') as cache:
-      if isinstance(ids,list):
-        logger.debug("Saving %s ids to %s",len(ids),fname)
-        for i in ids:
-          cache.write(fmt.format(i))
-      else:   
-        logger.debug("Saving %s id to %s",ids,fname)
-        cache.write(fmt.format(ids))
+      logger.debug("Saving %s ids to %s",len(ids),fname)
+      for i in ids:
+        cache.write(fmt.format(i))
   
     return
 
@@ -86,9 +83,12 @@ class twitter_graph():
     if not os.path.isfile(fname):
       return []
 
-    with open(fname, 'r') as cache:
-        cache = cache.read()
-        cache = cache.split() 
+    with open(fname, 'r') as cache_file:
+        cache_lst = cache_file.read().split()
+        cache_map = map(int,cache_lst)
+        cache = list(cache_map)
+    
+    logger.info("Loaded %s entries from cache %s",len(cache),fname)
     return cache
 
   def _make_nodes_headers(self):
@@ -119,6 +119,8 @@ class twitter_graph():
       user = self.api.UsersLookup(screen_name=username)[0]
       followers = self.api.GetFollowerIDs(user.id,total_count=5000)
       logger.info("Found {} followers from {}".format(len(followers),user.screen_name)) 
+      # To prevent rate limiting. 
+      # 15 request per 15 minutes or one request per minute
     except twitter.error.TwitterError as e: 
       logger.error("When getting followers for id {}".format(username))
       logger.error("Failed. Error: {}".format(e))
@@ -160,6 +162,9 @@ class twitter_graph():
       try:
         slc_users = self.api.UsersLookup(slc,return_json=True)
         users.extend(slc_users)
+        # To avoid rate limiting 300 request per 15 minutes
+        # Or 1 request every 3 secs
+        time.sleep(3.5)
       except twitter.error.TwitterError as e:
         logger.error("Failed. Error: {}".format(e))
   
@@ -193,8 +198,9 @@ class twitter_graph():
       print(t.text)    
 
   def make_network(self,root):
-    """root is username to pivot"""
+    """Entrypoint root is username to from"""
     # Can't add pivot/root to cache else won't start on secon runs
+    logger.info("Scraping network, pivot from %s",root)
     edges=self.get_followers(root)
     logger.info("Loading caches")
     self.user_cache = self.load_cache(self.user_cache_name)
@@ -215,17 +221,27 @@ class twitter_graph():
     
   def get_network(self,edges):
     """ From pivots follows ids get all ids"""
+    i = 0
+    n_edges = len(edges)
     for e in edges:
-      if str(e) in self.follow_cache:
+      logger.info("Progress: Proccessed {} out of {} ids, {}% done".format(i,n_edges,i/n_edges*100))
+      i+=1
+      if e in self.follow_cache:
         logger.info("ID %s already on followers cache",e)
         continue
+      else:
+        logger.info("ID %s not in cache",e)
       # Get followers from each edge
       followers_list=self.get_followers_id(e)
       # Add to hydration queue 
       self.queue.put(followers_list)
       # Save to cache and persists
-      self.save_cache(self.follow_cache_name,e) 
+      # Pass as list of one element to simplify cache function
+      self.save_cache(self.follow_cache_name,[e]) 
       self.persist_followers(e,followers_list)
+      # To prevent rate limiting. 
+      # 15 request per 15 minutes or one request per minute
+      time.sleep(61)
 
     # Stop when everythin is done
     logger.info("All finished stop threads")
@@ -242,45 +258,18 @@ class twitter_graph():
         # In case queue is empty before stop is set
         logger.debug("Queue is empty for more than 10 secs")
         continue
-      new_ids = set(ids) - set(self.user_cache)
+      logger.info("Cache has %s, ids has %s",len(self.user_cache),len(ids))
+      cache_set = set(self.user_cache)
+      ids_set = set(ids)
+      new_ids = ids_set.difference(cache_set) 
       new_ids_lst = list(new_ids)
       logger.info("Found %s ids not in cache",len(new_ids))
       users = self.get_users_from_ids(new_ids_lst)
       # Persist users and cache 
+      self.user_cache.extend(new_ids_lst)
       self.save_cache(self.user_cache_name,new_ids_lst)
       self.persist_users(users)
 
     logger.info("User scraping finished") 
     return     
 
-
-if __name__ == "__main__":
-  # Set up logging
-  logger = logging.getLogger("Networks")
-  logger.setLevel(logging.DEBUG)
-
-  fmt = logging.Formatter("%(asctime)s: %(message)s")
-
-  ch = logging.StreamHandler()
-  ch.setLevel(logging.INFO)
-  ch.setFormatter(fmt)
-  logger.addHandler(ch)
-
-  fh = logging.FileHandler("twitter_net.log")
-  fh.setLevel(logging.DEBUG)
-  fh.setFormatter(fmt)
-  logger.addHandler(fh)
-
-  args = parse_arguments()
-  grph = twitter_graph(nodes_filename=args.nodes,
-          edges_filename=args.edges,
-          user_cache_name=args.user_cache,
-          follow_cache_name=args.follows_cache)
-  #grph.get_friends(args.user)
-  
-  logger.info("Scraping network, pivot from %s",args.user)
-  #f = grph.get_followers(args.user)
-  #u = grph.get_users_from_ids(f)
-  
-  grph.make_network(args.user)
-  

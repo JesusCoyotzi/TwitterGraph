@@ -3,5 +3,6 @@
 *.txt
 networks/*
 *.log
+*.pyc
 *.swp
 
