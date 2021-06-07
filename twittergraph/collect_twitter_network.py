@@ -1,7 +1,7 @@
 import argparse 
 import logging
 
-from twittergraph.twitter_graph import TwitterGraph
+from networkcollection.twitter_graph import TwitterGraph
 
 def parse_arguments():
   parser = argparse.ArgumentParser()
