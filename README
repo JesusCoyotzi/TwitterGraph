@@ -1,0 +1,23 @@
+# TwitterGraph 
+
+Small collections of scripts and code to collect and analyze twitter based social networks. 
+
+Meant to collect Twitter social networks via official API (v1) using python-twitter wrapper for simplicity
+
+Also allows to analyze collected information via networkx to do stuff such as pruning, getting statistics and clustering. 
+
+This is a work in progress 
+
+## Dependencies
+python-twitter
+networkx
+
+## Modules
+
+### Graph/network collection
+Based on the networkcollection package it provides a class to interact and collect a social network via python-twitter API wrapper.
+Currently it supports single root social networks, meaning you specify a certain user and the program gets the user followers and then the followers of the followers, IDs only. Program also automatically gathers statistics of followers IDs such as screen name and follow counts for further use.
+Output are two files nodes.csv and edges.csv. First is a csv with the user attributes: ID, name, description etc. Second it a adjacency list of format: source, target,target,....,target
+
+### Analyze module
+Based on the networkanalyze module this is meant to use networkx to analyze the resulting social network. So far it accepts the adjacency list files produced by the collector and gives some basic information, such as number of nodes and top nodes with most followers (highest degree). 
