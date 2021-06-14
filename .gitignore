@@ -4,5 +4,6 @@
 networks/*
 *.log
 *.pyc
+*.graphml
 *.swp
 
