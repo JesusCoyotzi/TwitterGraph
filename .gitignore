@@ -6,4 +6,5 @@ networks/*
 *.pyc
 *.graphml
 *.swp
+*.run
 

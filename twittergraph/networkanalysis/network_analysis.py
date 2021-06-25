@@ -15,6 +15,15 @@ class TwitterNetwork():
     self.load_graph(graph_filename)
     self.load_attributes(attr_filename)
     return 
+
+  @staticmethod
+  def read_node_list(filename):
+    with open(filename,'r') as node_file:
+      node_list = node_file.read().split()
+    logger.info("Loaded %s nodes from %s",len(node_list),filename)
+    # Go froms string to integer
+    node_list = list(map(int,node_list))
+    return node_list
  
   def load_graph(self,filename):
     """ Load graph from adjacency list txt file"""
@@ -31,6 +40,13 @@ class TwitterNetwork():
     logger.info("Got %s nodes attributes" , len(self.attr))
     return
 
+  def set_node_names(self):
+    """ Set twitter handle as name attribute for each node """
+    name_df = self.attr['screen_name']
+    attr_dic = name_df.to_dict()
+    nx.set_node_attributes(self.net,attr_dic,name='username')
+    return 
+  
   def get_statistics(self,n=10):
     """ Compute basic statistics for graph, prints n top elements """
     self.get_net_degree(top=n)
@@ -57,7 +73,7 @@ class TwitterNetwork():
     self.min_node = sorted_nodes[-1]
     logger.info("Largest degree node: %s",self.max_node)
     logger.info("Smallest degree node: %s",self.min_node)
-    return sorted_nodes, top_list 
+    return self.net.degree , top_list 
      
   def get_pagerank(self,top=10):
     """Compute pagerank for network, return pagerank dict
@@ -74,7 +90,7 @@ class TwitterNetwork():
         screen_name = self.attr.loc[n]['screen_name']
         logger.debug("%s node: %s|%s has pagerank %s",i,n,screen_name,page)
       except KeyError as e:
-        logger.info("%s node has no in file (?)")
+        logger.info("%s node has no id file (?)")
         logger.warning("%s node not found in file",e)
     return page_rank, top_list
 
@@ -83,6 +99,16 @@ class TwitterNetwork():
     output_slice  = self.attr.loc[part]
     return output_slice
     
+  def slice_attr(self,update_df=False):
+    """ Return attributers dataframe only for nodes actually on graph"""
+    # May have more nodes on the attribute files than nodes in the graph
+    node_lst = list(self.net.nodes)
+    output_slice = self.attr.loc[node_lst]
+    if update_df:
+      # This effectively removes every node not in graph from attributes dataframe
+      self.attr = output_slice 
+
+    return output_slice
 
   def prune_nodes(self,prune_thr=5):
     """Remove all nodes with certain order threshold"""
@@ -92,6 +118,13 @@ class TwitterNetwork():
     logger.info("Network has %s edges remaining",self.net.number_of_edges())
     return
 
+  def remove_nodes(self,nodes):
+    """ Remove nodes from network"""
+    logger.info("Removing %s nodes from list",len(nodes))
+    self.net.remove_nodes_from(nodes)
+    logger.info("Network has %s edges remaining",self.net.number_of_edges())
+    return
+      
    
   def save_graphml(self,filename):
     """ Save graph as GraphML """ 
