@@ -224,11 +224,15 @@ class TwitterGraph():
     for t in tweets:
       print(t.text)    
 
-  def make_network(self,root):
-    """Entrypoint root is username to from"""
+  def load_caches(self):
     logger.info("Loading caches")
     self.user_cache = self.load_cache(self.user_cache_name)
     self.follow_cache = self.load_cache(self.follow_cache_name)
+    return
+    
+  def make_network(self,root):
+    """Entrypoint root is username to from"""
+    self.load_caches()
     # Can't add pivot/root to cache else won't start on secon runs
     logger.info("Scraping network, pivot from %s",root)
     edges=self.get_followers(root)
