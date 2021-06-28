@@ -9,8 +9,8 @@ social media analysis.
 
 Yet despite this, to the authors knowledge there are not many tools available for doing network analysis of this platform. 
 Most people interested in analyzing their twitter followers on twitter end up rolling up their own solution. 
-There is [https://github.com/eleurent/twitter-graph](Eleurent excellent twitter-graph) repository, much of the work here is based on his 
-ideas, and this excellent [https://towardsdatascience.com/building-a-network-graph-from-twitter-data-a5e7b8672e3](Article on how to do this on Java)
+There is [Eleurent excellent twitter-graph](https://github.com/eleurent/twitter-graph) repository, much of the work here is based on his 
+ideas, and this excellent [Article on how to do this on Java](https://towardsdatascience.com/building-a-network-graph-from-twitter-data-a5e7b8672e3)
 Unfortunately the former is made with mostly the with authors Twitter in mind and visualization is done in JavaScript  and the second 
 is written in Java. 
 
